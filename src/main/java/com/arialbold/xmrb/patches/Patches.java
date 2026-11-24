@@ -311,30 +311,34 @@ public final class Patches {
     }
 
     // ------------------------------------------------------------------
-    // HD badge for DSD
+    // HR (High-Resolution) badge for DSD
 
     static final class HdBadge implements Patch {
-        public String feature() { return "HD badge for DSD"; }
+        public String feature() { return "HR badge for DSD"; }
         public void apply(Smali s) throws Exception {
-            ClassFile c = s.find("\"is_high_res\"", "\"audio/dsd\"", "\\$TrackInfo;->mimeType");
-            need(c != null, "HD list code not found");
+            // Sony's high-res list: the class that writes "is_high_res" for each track it inspects.
+            ClassFile c = s.find("\"is_high_res\"", "\\$TrackInfo;->mimeType", "MediaMetadataRetriever;->setDataSource");
+            if (c == null) c = s.find("\"is_high_res\"", "\\$TrackInfo;->mimeType");
+            need(c != null, "Sony’s high-res track list wasn’t found");
             Method sync = c.method("static sync(Landroid/content/Context;");
-            need(sync != null, "HD list sync not found");
+            if (sync == null) sync = c.method("static synchronize(Landroid/content/Context;");
+            need(sync != null, "the high-res list update wasn’t found");
             sync.insert(sync.firstInstruction(), Smali.invokeOne("p0", PKG + "DsdTags;->forceHdRescanOnce(Landroid/content/Context;)V"));
 
             Pattern set = Pattern.compile("invoke-virtual \\{([vp]\\d+), ([vp]\\d+), ([vp]\\d+)\\}, Landroid/media/MediaMetadataRetriever;->setDataSource\\(Landroid/content/Context;Landroid/net/Uri;\\)V");
             Pattern mime = Pattern.compile("iget-object ([vp]\\d+), ([vp]\\d+), L[^;]*\\$TrackInfo;->mimeType:");
-            Pattern dsd = Pattern.compile("const-string ([vp]\\d+), \"audio/dsd\"");
+            // the DSD type is either written out or read from Sony's AudioMimeTypes constant
+            Pattern dsd = Pattern.compile("(?:const-string ([vp]\\d+), \"audio/dsd\"|sget-object ([vp]\\d+), L[^;]+;->MIME_TYPE_DSD:Ljava/lang/String;)");
             boolean done = false;
             for (Method m : c.methods()) {
                 int si = m.findRegex(set, m.start);
                 if (si < 0) continue;
                 int di = m.findRegex(dsd, si);
-                need(di > 0, "DSD check not found");
+                need(di > 0, "the DSD type check wasn’t found");
                 Matcher dm = dsd.matcher(c.lines.get(di)); dm.find();
-                String constReg = dm.group(1);
+                String constReg = dm.group(1) != null ? dm.group(1) : dm.group(2);
                 int mi = m.findRegex(mime, di);
-                need(mi > 0, "track type read not found");
+                need(mi > 0, "the track type check wasn’t found");
                 Matcher mmm = mime.matcher(c.lines.get(mi)); mmm.find();
                 String track = mmm.group(2);
                 int ei = -1;
@@ -342,9 +346,9 @@ public final class Patches {
                     String l = c.lines.get(i);
                     if (l.contains("Ljava/lang/String;->equals(Ljava/lang/Object;)Z") && l.contains(constReg)) { ei = i; break; }
                 }
-                need(ei > 0, "DSD comparison not found");
+                need(ei > 0, "the DSD comparison wasn’t found");
                 Matcher sm = set.matcher(c.lines.get(si)); sm.find();
-                need(Smali.fitsInvoke(m, sm.group(1), sm.group(2), sm.group(3), track), "registers out of range");
+                need(Smali.fitsInvoke(m, sm.group(1), sm.group(2), sm.group(3), track), "the high-res check is laid out differently");
                 c.lines.set(si, "    invoke-static {" + sm.group(1) + ", " + sm.group(2) + ", " + sm.group(3) + ", " + track + "}, "
                         + PKG + "DsdTags;->mmrSetDataSourceTrack(Landroid/media/MediaMetadataRetriever;Landroid/content/Context;Landroid/net/Uri;Ljava/lang/Object;)V");
                 c.lines.set(ei, Smali.invokeOne(track, PKG + "DsdTags;->isDsdTrack(Ljava/lang/Object;)Z"));
@@ -352,7 +356,7 @@ public final class Patches {
                 done = true;
                 break;
             }
-            need(done, "HD check method not found");
+            need(done, "the high-res check wasn’t found");
             c.save();
         }
     }
