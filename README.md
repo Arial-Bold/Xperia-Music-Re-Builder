@@ -37,7 +37,7 @@ No Java install is needed; everything is included.
 
 ## How to use it
 
-1. **Get Sony’s Music app.** You need its APK (`com.sonyericsson.music`, version 9.4 or newer), for example copied off an Xperia. The Re-Builder doesn’t include it or download it. If you have a split app, use the `base.apk` inside it.
+1. **Get Sony’s Music app.** You need its APK (`com.sonyericsson.music`, version 9.4 or newer; tested with 9.4.16.A.0.11 and 9.4.16.A.1.17), for example copied off an Xperia. The Re-Builder doesn’t include it or download it. If you have a split app, use the `base.apk` inside it.
 2. **Drop it on the window**, or click Choose File.
 3. **Choose a signing key.** Android only installs an update over an app signed with the same key, so use the same one every time:
    - *Create a key for me and keep it.* The Re-Builder makes one and stores it in its settings folder.

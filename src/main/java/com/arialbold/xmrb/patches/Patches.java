@@ -329,34 +329,63 @@ public final class Patches {
             Pattern mime = Pattern.compile("iget-object ([vp]\\d+), ([vp]\\d+), L[^;]*\\$TrackInfo;->mimeType:");
             // the DSD type is either written out or read from Sony's AudioMimeTypes constant
             Pattern dsd = Pattern.compile("(?:const-string ([vp]\\d+), \"audio/dsd\"|sget-object ([vp]\\d+), L[^;]+;->MIME_TYPE_DSD:Ljava/lang/String;)");
+            // Newer versions (9.4.16.A.1.x) ask AudioFormatUtils.isHighRes(bits, rate, mimeType) instead.
+            Pattern helper = Pattern.compile("invoke-static \\{([vp]\\d+), ([vp]\\d+), ([vp]\\d+)\\}, L[^;]+;->isHighRes\\(IILjava/lang/String;\\)Z");
+            Pattern result = Pattern.compile("move-result ([vp]\\d+)");
             boolean done = false;
+            String why = "the high-res check wasn’t found";
             for (Method m : c.methods()) {
                 int si = m.findRegex(set, m.start);
                 if (si < 0) continue;
-                int di = m.findRegex(dsd, si);
-                need(di > 0, "the DSD type check wasn’t found");
-                Matcher dm = dsd.matcher(c.lines.get(di)); dm.find();
-                String constReg = dm.group(1) != null ? dm.group(1) : dm.group(2);
-                int mi = m.findRegex(mime, di);
-                need(mi > 0, "the track type check wasn’t found");
+                int mi = m.findRegex(mime, si);
+                if (mi < 0) { why = "the track type check wasn’t found"; continue; }
                 Matcher mmm = mime.matcher(c.lines.get(mi)); mmm.find();
                 String track = mmm.group(2);
-                int ei = -1;
-                for (int i = mi; i <= m.end && i < mi + 8; i++) {
-                    String l = c.lines.get(i);
-                    if (l.contains("Ljava/lang/String;->equals(Ljava/lang/Object;)Z") && l.contains(constReg)) { ei = i; break; }
-                }
-                need(ei > 0, "the DSD comparison wasn’t found");
                 Matcher sm = set.matcher(c.lines.get(si)); sm.find();
-                need(Smali.fitsInvoke(m, sm.group(1), sm.group(2), sm.group(3), track), "the high-res check is laid out differently");
-                c.lines.set(si, "    invoke-static {" + sm.group(1) + ", " + sm.group(2) + ", " + sm.group(3) + ", " + track + "}, "
-                        + PKG + "DsdTags;->mmrSetDataSourceTrack(Landroid/media/MediaMetadataRetriever;Landroid/content/Context;Landroid/net/Uri;Ljava/lang/Object;)V");
-                c.lines.set(ei, Smali.invokeOne(track, PKG + "DsdTags;->isDsdTrack(Ljava/lang/Object;)Z"));
-                c.lines.set(di, "    # fpmod: DSD check moved to DsdTags.isDsdTrack");
+                if (!Smali.fitsInvoke(m, sm.group(1), sm.group(2), sm.group(3), track)) { why = "the high-res check is laid out differently"; continue; }
+                String setDsd = "    invoke-static {" + sm.group(1) + ", " + sm.group(2) + ", " + sm.group(3) + ", " + track + "}, "
+                        + PKG + "DsdTags;->mmrSetDataSourceTrack(Landroid/media/MediaMetadataRetriever;Landroid/content/Context;Landroid/net/Uri;Ljava/lang/Object;)V";
+
+                // Layout 1: the method itself compares the type with "audio/dsd"
+                int di = m.findRegex(dsd, si);
+                if (di > 0 && di < mi) {
+                    Matcher dm = dsd.matcher(c.lines.get(di)); dm.find();
+                    String constReg = dm.group(1) != null ? dm.group(1) : dm.group(2);
+                    int ei = -1;
+                    for (int i = mi; i <= m.end && i < mi + 8; i++) {
+                        String l = c.lines.get(i);
+                        if (l.contains("Ljava/lang/String;->equals(Ljava/lang/Object;)Z") && l.contains(constReg)) { ei = i; break; }
+                    }
+                    if (ei < 0) { why = "the DSD comparison wasn’t found"; continue; }
+                    c.lines.set(si, setDsd);
+                    c.lines.set(ei, Smali.invokeOne(track, PKG + "DsdTags;->isDsdTrack(Ljava/lang/Object;)Z"));
+                    c.lines.set(di, "    # fpmod: DSD check moved to DsdTags.isDsdTrack");
+                    done = true;
+                    break;
+                }
+
+                // Layout 2: a shared helper decides; keep its answer and also accept DSD tracks
+                int hi = m.findRegex(helper, mi);
+                if (hi < 0 || hi > mi + 6) { why = "the high-res check wasn’t found"; continue; }
+                int ri = m.findRegex(result, hi);
+                if (ri < 0 || ri > hi + 3) { why = "the high-res result wasn’t found"; continue; }
+                Matcher rm = result.matcher(c.lines.get(ri)); rm.find();
+                String res = rm.group(1);
+                c.lines.set(si, setDsd);
+                c.lines.addAll(ri + 1, java.util.Arrays.asList(
+                        "",
+                        "    # fpmod: DSD tracks count as high-res",
+                        "    if-nez " + res + ", :fpmod_hr_done",
+                        "",
+                        Smali.invokeOne(track, PKG + "DsdTags;->isDsdTrack(Ljava/lang/Object;)Z"),
+                        "",
+                        "    move-result " + res,
+                        "",
+                        "    :fpmod_hr_done"));
                 done = true;
                 break;
             }
-            need(done, "the high-res check wasn’t found");
+            need(done, why);
             c.save();
         }
     }
