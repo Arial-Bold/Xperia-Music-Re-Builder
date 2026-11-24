@@ -1,5 +1,3 @@
-<p align="center"><img src="docs/icon.png" width="128" alt=""></p>
-
 <h1 align="center">Xperia Music Re-Builder</h1>
 
 <p align="center">Rebuilds Sony’s Xperia Music app so it installs on any Android phone, and adds DSD playback, ReplayGain, cover downloads and a tidier Settings screen.<br>For macOS and Windows.</p>
