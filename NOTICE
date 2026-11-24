@@ -1,0 +1,23 @@
+Xperia Music Re-Builder
+Copyright (c) 2026 Arial-Bold. MIT License (see LICENSE), except as noted below.
+
+This project contains no code, resources or artwork from Sony. You supply Sony's
+Music app yourself; the Re-Builder changes your copy on your own computer.
+Not affiliated with or endorsed by Sony Group Corporation. "Xperia" is a
+trademark of Sony Group Corporation, used here only to say which app this works with.
+
+payload/src/com/fpmod/dsd/DstDecoder.java
+  A Java port of FFmpeg's DST decoder (libavcodec/dstdec.c, Peter Ross).
+  Licensed under the GNU Lesser General Public License, version 2.1 or later
+  (see COPYING.LGPL-2.1). Its source is included here and may be changed and
+  rebuilt with scripts/build-payload.sh.
+
+Bundled in the release builds (not stored in this repository):
+  Apktool 2.10.0          Apache License 2.0   https://github.com/iBotPeaches/Apktool
+  uber-apk-signer 1.3.0   Apache License 2.0   https://github.com/patrickfav/uber-apk-signer
+    (includes Google's apksig, Apache License 2.0)
+  FlatLaf 3.5.4           Apache License 2.0   https://github.com/JFormDesigner/FlatLaf
+  Eclipse Temurin runtime GPLv2 with Classpath Exception  https://adoptium.net
+
+Online services used by the rebuilt app:
+  MusicBrainz and the Cover Art Archive, for the "Download image" cover search.
