@@ -55,6 +55,35 @@ public final class FpSettings {
                 ((PreferenceGroup) quality).addPreference(dsd);
             }
 
+            // Classic player layout switch, in Customize right after Theme (only where the newer player exists).
+            Preference customize = fragment.findPreference("pref_key_music_settings_customize");
+            if (customize instanceof PreferenceGroup && PlayerStyle.supported(ctx)) {
+                PreferenceGroup cg = (PreferenceGroup) customize;
+                int after = cg.getPreferenceCount() - 1;
+                for (int i = 0; i < cg.getPreferenceCount(); i++) {
+                    Preference p = cg.getPreference(i);
+                    p.setOrder(i * 10);
+                    if ("pref_key_theme".equals(p.getKey())) after = i;
+                }
+                final com.sonyericsson.music.settings.InterceptableSwitchPreference cp =
+                        new com.sonyericsson.music.settings.InterceptableSwitchPreference(ctx);
+                final SharedPreferences fsp = sp;
+                cp.setKey(PlayerStyle.KEY);
+                cp.setPersistent(false);
+                cp.setTitle("Classic player layout");
+                cp.setSummary("Album art edge to edge, without the format line above the song title.");
+                cp.setChecked(sp.getBoolean(PlayerStyle.KEY, true));
+                cp.setOrder(after * 10 + 5);
+                cp.setInterceptor(new com.sonyericsson.music.settings.InterceptableSwitchPreference.SwitchInterceptor() {
+                    @Override public void onIntercept(com.sonyericsson.music.settings.InterceptableSwitchPreference p) {
+                        boolean on = !p.isChecked();
+                        p.setChecked(on);
+                        fsp.edit().putBoolean(PlayerStyle.KEY, on).apply();
+                    }
+                });
+                cg.addPreference(cp);
+            }
+
             // Space out the existing sections so ours can sit right after "Audio quality".
             for (int i = 0; i < screen.getPreferenceCount(); i++) screen.getPreference(i).setOrder(i * 10);
             PreferenceCategory cat = new PreferenceCategory(ctx, null);

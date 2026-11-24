@@ -46,6 +46,8 @@ public final class Patches {
         l.add(new CoverArt());
         l.add(new DownloadImage());
         l.add(new HdBadge());
+        l.add(new ClassicPlayer());
+        l.add(new ArtHrIcon());
         return l;
     }
 
@@ -386,6 +388,54 @@ public final class Patches {
                 break;
             }
             need(done, why);
+            c.save();
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Classic player layout switch (Settings > Customize)
+
+    static final class ClassicPlayer implements Patch {
+        public String feature() { return "Classic player layout switch"; }
+        public void apply(Smali s) throws Exception {
+            ClassFile c = s.find("^\\.class .*Lcom/sonyericsson/music/fullplayer/MetadataView;", "onFinishInflate\\(\\)V");
+            need(c != null, "the player’s song info view wasn’t found");
+            Method m = c.method("onFinishInflate()V");
+            need(m != null, "the player’s setup step wasn’t found");
+            int added = 0;
+            for (int i = m.end; i > m.start; i--) {
+                if (c.lines.get(i).trim().equals("return-void")) {
+                    m.insert(i, Smali.invokeOne("p0", PKG + "PlayerStyle;->attach(Landroid/view/View;)V"));
+                    added++;
+                }
+            }
+            need(added > 0, "the player’s setup step ends unexpectedly");
+            c.save();
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // HR icon on the album art in the classic layout (as older versions drew it)
+
+    static final class ArtHrIcon implements Patch {
+        public String feature() { return "HR icon on album art (classic layout)"; }
+        public void apply(Smali s) throws Exception {
+            ClassFile c = s.find("^\\.class .*Lcom/sonyericsson/music/fullplayer/ArtPagerItemView;", "mHdAudio:Z");
+            need(c != null, "the album art view wasn’t found");
+            if (c.text().contains("mHdAudioDrawable")) return;      // older versions still draw it themselves
+            Method m = c.method("onDraw(Landroid/graphics/Canvas;)V");
+            need(m != null, "the album art drawing step wasn’t found");
+            String self = m.newLocal();                               // onDraw reuses p0, so keep "this"
+            m.insert(m.firstInstruction(), "    move-object/from16 " + self + ", p0");
+            need(Smali.fitsInvoke(m, self, "p1"), "the album art drawing step is laid out differently");
+            int added = 0;
+            for (int i = m.end; i > m.start; i--) {
+                if (c.lines.get(i).trim().equals("return-void")) {
+                    m.insert(i, "    invoke-static {" + self + ", p1}, " + PKG + "PlayerStyle;->drawHr(Landroid/view/View;Landroid/graphics/Canvas;)V");
+                    added++;
+                }
+            }
+            need(added > 0, "the album art drawing step ends unexpectedly");
             c.save();
         }
     }

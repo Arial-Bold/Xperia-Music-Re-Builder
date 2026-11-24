@@ -6,5 +6,5 @@ public class Preference {
   public void setKey(String k) {} public void setPersistent(boolean b) {} public void setTitle(CharSequence t) {}
   public void setSummary(CharSequence s) {} public void setIconSpaceReserved(boolean b) {}
   public void setOnPreferenceClickListener(OnPreferenceClickListener l) {}
-  public void setOrder(int o) {} public int getOrder() { return 0; } public void setEnabled(boolean e) {} public final void setVisible(boolean v) {}
+  public String getKey() { return null; } public void setOrder(int o) {} public int getOrder() { return 0; } public void setEnabled(boolean e) {} public final void setVisible(boolean v) {}
 }

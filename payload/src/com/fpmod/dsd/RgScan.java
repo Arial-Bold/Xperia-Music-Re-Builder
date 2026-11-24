@@ -46,6 +46,8 @@ import java.util.Map;
  */
 public final class RgScan {
     private static final String TAG = "RgScan";
+    private static final long STALL_MS = 15000;      // no output at all for this long: give up on the file
+    private static final long END_GRACE_MS = 2000;   // all input given, output stopped: treat as finished
     private static final String CHANNEL = "fpmod_rg_scan";
     private static final int NOTIF_ID = 0x5251;
     private static final int REQ = 0x5252;
@@ -54,9 +56,24 @@ public final class RgScan {
     private static final class Track {
         long id; Uri uri; String name, albumKey, album;
         Loudness meter; double lufs, peak; double[] blocks;
+        volatile long beat;   // last time measuring made progress (for the stuck-song guard)
     }
 
     private static volatile boolean running, stop;
+    /** Songs being worked on now: name -> {start time, 0 = measuring / 1 = saving}. */
+    private static final java.util.concurrent.ConcurrentHashMap<String, long[]> active = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** The song that has been busy longest, if it's been more than 20 seconds. */
+    private static String slowest() {
+        String name = null; long[] w = null;
+        for (java.util.Map.Entry<String, long[]> e : active.entrySet()) {
+            if (w == null || e.getValue()[0] < w[0]) { name = e.getKey(); w = e.getValue(); }
+        }
+        if (w == null) return "";
+        long secs = (System.currentTimeMillis() - w[0]) / 1000;
+        if (secs < 20) return "";
+        return String.format(java.util.Locale.US, "\nSlowest now: %s (%s, %d:%02d)", name, w[1] == 0 ? "measuring" : "saving tags", secs / 60, secs % 60);
+    }
     private static volatile String progress = "";
 
     private RgScan() { }
@@ -206,7 +223,7 @@ public final class RgScan {
         running = true; stop = false;
         final Handler ui = new Handler(Looper.getMainLooper());
         // Several albums are measured at once, one per core (up to 4), keeping some cores free.
-        final int threads = Math.max(2, Math.min(4, Runtime.getRuntime().availableProcessors() / 2));
+        final int threads = Math.max(2, Math.min(6, Runtime.getRuntime().availableProcessors() - 2));
         Toast.makeText(app, "Measuring " + todo.size() + " tracks (" + threads + " at a time). Progress is in your notifications.", Toast.LENGTH_LONG).show();
         new Thread(new Runnable() {
             @Override public void run() {
@@ -222,6 +239,19 @@ public final class RgScan {
                     if (l == null) { l = new ArrayList<>(); groups.put(k, l); }
                     l.add(t);
                 }
+                active.clear();
+                final Runnable[] tick = new Runnable[1];
+                tick[0] = new Runnable() {
+                    @Override public void run() {
+                        if (!running) return;
+                        synchronized (lastNotice) {
+                            long now = System.currentTimeMillis();
+                            if (now - lastNotice[0] > 4000) { lastNotice[0] = now; showNotice(app, progress + slowest(), done.get(), todo.size(), true); }
+                        }
+                        ui.postDelayed(tick[0], 5000);
+                    }
+                };
+                ui.postDelayed(tick[0], 5000);
                 java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(threads);
                 List<java.util.concurrent.Future<?>> jobs = new ArrayList<>();
                 for (final List<Track> album : groups.values()) {
@@ -233,8 +263,9 @@ public final class RgScan {
                             List<Track> measured = new ArrayList<>();
                             for (Track t : album) {
                                 if (stop) return;
+                                active.put(t.name, new long[]{System.currentTimeMillis(), 0});
                                 try {
-                                    measure(app, t);
+                                    measureGuarded(app, t);
                                     measured.add(t);
                                     energies.add(t.blocks);
                                     albumPeak = Math.max(albumPeak, t.peak);
@@ -242,15 +273,17 @@ public final class RgScan {
                                     if (stop) return;
                                     failed.incrementAndGet(); failures.add(t.name + ": " + e.getMessage());
                                     Log.w(TAG, "measure failed " + t.name, e);
+                                } finally {
+                                    active.remove(t.name);
                                 }
                                 int d = done.incrementAndGet();
                                 progress = "Measured " + d + " of " + todo.size() + " \u2014 " + t.name;
                                 synchronized (lastNotice) {
                                     long now = System.currentTimeMillis();
-                                    if (now - lastNotice[0] > 1000) { lastNotice[0] = now; showNotice(app, progress, d, todo.size(), true); }
+                                    if (now - lastNotice[0] > 1000) { lastNotice[0] = now; showNotice(app, progress + slowest(), d, todo.size(), true); }
                                 }
                             }
-                            if (stop) return;   // album unfinished: its tracks are left for the next scan
+                            // every song in the album was attempted: save it, even if Stop was pressed meanwhile
                             double albumLufs = Double.NaN;
                             if (album.get(0).albumKey != null && !measured.isEmpty()) {
                                 int n = 0;
@@ -265,8 +298,10 @@ public final class RgScan {
                                 v.trackGain = Loudness.gainDb(t.lufs);
                                 v.trackPeak = t.peak;
                                 if (!Double.isNaN(albumLufs)) { v.albumGain = Loudness.gainDb(albumLufs); v.albumPeak = albumPeak; }
+                                active.put(t.name, new long[]{System.currentTimeMillis(), 1});
                                 try { writeTags(app, t, v); ok.incrementAndGet(); }
                                 catch (Throwable e) { failed.incrementAndGet(); failures.add(t.name + ": " + e.getMessage()); Log.w(TAG, "write failed " + t.name, e); }
+                                finally { active.remove(t.name); }
                                 t.blocks = null;
                             }
                         }
@@ -297,6 +332,40 @@ public final class RgScan {
 
     // ---------------------------------------------------------- measure
 
+    private static final long NO_PROGRESS_MS = 30000;
+    private static final java.util.concurrent.ExecutorService measurePool =
+            java.util.concurrent.Executors.newCachedThreadPool(new java.util.concurrent.ThreadFactory() {
+                public Thread newThread(Runnable r) { Thread th = new Thread(r, "RgMeasure"); th.setDaemon(true); return th; }
+            });
+
+    /**
+     * Measures on a helper thread and gives up if nothing happens for 30 seconds at any stage
+     * (opening, reading or decoding), so one bad file can't hold up its album or the scan.
+     * Not used for writing: abandoning a write halfway could damage the file.
+     */
+    private static void measureGuarded(final Context app, final Track t) throws Exception {
+        t.beat = System.currentTimeMillis();
+        java.util.concurrent.Future<?> f = measurePool.submit(new java.util.concurrent.Callable<Void>() {
+            public Void call() throws Exception { measure(app, t); return null; }
+        });
+        while (true) {
+            try {
+                f.get(1, java.util.concurrent.TimeUnit.SECONDS);
+                return;
+            } catch (java.util.concurrent.TimeoutException te) {
+                if (stop) { f.cancel(true); throw new IOException("stopped"); }
+                if (System.currentTimeMillis() - t.beat > NO_PROGRESS_MS) {
+                    f.cancel(true);
+                    throw new IOException("got stuck (no progress for 30 seconds), skipped");
+                }
+            } catch (java.util.concurrent.ExecutionException ee) {
+                Throwable c = ee.getCause();
+                if (c instanceof Exception) throw (Exception) c;
+                throw new IOException(String.valueOf(c));
+            }
+        }
+    }
+
     private static void measure(Context ctx, Track t) throws Exception {
         ParcelFileDescriptor pfd = ctx.getContentResolver().openFileDescriptor(t.uri, "r");
         if (pfd == null) throw new IOException("can't open");
@@ -304,7 +373,7 @@ public final class RgScan {
             FileInputStream in = new FileInputStream(pfd.getFileDescriptor());
             FileChannel ch = in.getChannel();
             if (DsdWav.looksLikeDsd(ch)) measureDsd(ch, t);
-            else measureCodec(pfd, t);
+            else if (!measureFlac(ch, t) && !measureMp4(ch, t)) measureCodec(pfd, t);
         } finally {
             pfd.close();
         }
@@ -314,6 +383,47 @@ public final class RgScan {
         t.meter = null;
         if (Double.isNaN(t.lufs) || Double.isInfinite(t.lufs) || t.lufs <= -69.9) throw new IOException("measured as silent, so no tags were written");
         if (Double.isNaN(t.peak) || Double.isInfinite(t.peak) || t.peak <= 0 || t.peak > 4) throw new IOException("peak level out of range (" + t.peak + ")");
+    }
+
+    /**
+     * FLAC is decoded here rather than by the phone's media components, which on some phones
+     * (Samsung's especially) read large files slowly. Returns false if the file isn't FLAC or
+     * uses something the decoder doesn't handle, so the system decoder can take over.
+     */
+    private static boolean measureFlac(FileChannel ch, Track t) throws IOException {
+        FlacDecoder d;
+        try { d = new FlacDecoder(ch); } catch (Exception e) { return false; }
+        final Loudness m = new Loudness(d.channels, d.sampleRate);
+        final int nc = d.channels;
+        final float scale = 1f / (1 << (d.bitsPerSample - 1));
+        final float[][] fb = {new float[0]};
+        try {
+            d.decode(new FlacDecoder.Sink() {
+                public void block(int[][] s, int n) throws IOException {
+                    if (stop) throw new IOException("stopped");
+                    t.beat = System.currentTimeMillis();
+                    int total = n * nc;
+                    if (fb[0].length < total) fb[0] = new float[total];
+                    float[] f = fb[0];
+                    if (nc == 2) {
+                        int[] l = s[0], r = s[1];
+                        for (int i = 0, o = 0; i < n; i++, o += 2) { f[o] = l[i] * scale; f[o + 1] = r[i] * scale; }
+                    } else {
+                        for (int c = 0; c < nc; c++) {
+                            int[] x = s[c];
+                            for (int i = 0, o = c; i < n; i++, o += nc) f[o] = x[i] * scale;
+                        }
+                    }
+                    m.add(f, n);
+                }
+            });
+        } catch (Exception e) {
+            if (stop) throw new IOException("stopped");
+            Log.w(TAG, "Built-in FLAC decoder couldn't read " + t.name + ", using the system decoder: " + e);
+            return false;
+        }
+        t.meter = m;
+        return true;
     }
 
     private static void measureDsd(FileChannel ch, Track t) throws IOException {
@@ -333,6 +443,7 @@ public final class RgScan {
             }
             m.add(f, frames);
             pos += n;
+            t.beat = System.currentTimeMillis();
         }
         t.meter = m;
     }
@@ -351,6 +462,51 @@ public final class RgScan {
             }
             if (track < 0) throw new IOException("no audio track");
             ex.selectTrack(track);
+            final MediaExtractor fex = ex;
+            runDecoder(fmt, new FrameSource() {
+                public int read(ByteBuffer dst) { int n = fex.readSampleData(dst, 0); if (n >= 0) fex.advance(); return n; }
+            }, t);
+        } finally {
+            ex.release();
+        }
+    }
+
+    /** Hands audio frames to the decoder one at a time. read() returns -1 at the end. */
+    private interface FrameSource { int read(ByteBuffer dst) throws IOException; }
+
+    /** M4A/MP4 read by the app's own reader (see Mp4Demux), decoded by Android's decoder. */
+    private static boolean measureMp4(FileChannel ch, Track t) throws Exception {
+        final Mp4Demux d;
+        try { d = Mp4Demux.open(ch); } catch (IOException e) {
+            if (e.getMessage() != null && e.getMessage().startsWith("protected")) throw e;   // DRM: fail fast
+            Log.w(TAG, "Built-in MP4 reader couldn't read " + t.name + ", using the system reader: " + e);
+            return false;
+        }
+        if (d == null) return false;
+        MediaFormat fmt = MediaFormat.createAudioFormat(d.mime, d.sampleRate, d.channels);
+        if (d.csd != null) fmt.setByteBuffer("csd-0", ByteBuffer.wrap(d.csd));
+        fmt.setInteger("max-input-size", Math.max(d.maxSize, 8192));
+        final int[] next = {0};
+        try {
+            runDecoder(fmt, new FrameSource() {
+                public int read(ByteBuffer dst) throws IOException {
+                    if (next[0] >= d.sizes.length) return -1;
+                    return d.readFrame(next[0]++, dst);
+                }
+            }, t);
+        } catch (IOException e) {
+            String msg = e.getMessage();
+            if (stop || msg == null || !msg.startsWith("MP4:")) throw e;
+            Log.w(TAG, "Built-in MP4 reader gave up on " + t.name + ", using the system reader: " + e);
+            t.meter = null;
+            return false;
+        }
+        return true;
+    }
+
+    private static void runDecoder(MediaFormat fmt, FrameSource src, Track t) throws Exception {
+        MediaCodec codec = null;
+        try {
             String mime = fmt.getString(MediaFormat.KEY_MIME);
             codec = openDecoder(mime, fmt);
             codec.start();
@@ -364,22 +520,30 @@ public final class RgScan {
             short[] sb = new short[0];
             int[] ib32 = new int[0];
             byte[] b24 = new byte[0];
+            long lastOutput = System.currentTimeMillis();
+            long decodedFrames = 0;
             while (!outDone && !stop) {
+                // Watchdog: some decoders stall (protected files, odd streams) or never mark the end.
+                long idle = System.currentTimeMillis() - lastOutput;
+                if (inDone && decodedFrames > 0 && idle > END_GRACE_MS) break;        // finished, end flag never came
+                if (idle > STALL_MS) throw new IOException("the phone's decoder stopped responding");
                 boolean progressed = false;
                 // hand the decoder every free input buffer without waiting
                 while (!inDone) {
                     int ii = codec.dequeueInputBuffer(0);
                     if (ii < 0) break;
                     ByteBuffer ib = codec.getInputBuffer(ii);
-                    int n = ex.readSampleData(ib, 0);
+                    int n = src.read(ib);
                     if (n < 0) { codec.queueInputBuffer(ii, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM); inDone = true; }
-                    else { codec.queueInputBuffer(ii, 0, n, ex.getSampleTime(), 0); ex.advance(); }
+                    else { codec.queueInputBuffer(ii, 0, n, 0, 0); }
                     progressed = true;
                 }
                 // take everything that's decoded; only wait when nothing else could happen
                 while (!outDone) {
                     int oi = codec.dequeueOutputBuffer(info, progressed ? 0 : 5000);
                     if (oi == MediaCodec.INFO_TRY_AGAIN_LATER) break;
+                    lastOutput = System.currentTimeMillis();
+                    t.beat = lastOutput;
                     if (oi == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
                         MediaFormat of = codec.getOutputFormat();
                         channels = of.getInteger(MediaFormat.KEY_CHANNEL_COUNT);
@@ -433,6 +597,7 @@ public final class RgScan {
                             if (x != x || x > 4f || x < -4f) throw new IOException("decoder returned unreadable audio");
                         }
                         m.add(fb, samples / channels);
+                        decodedFrames += samples / channels;
                     }
                     codec.releaseOutputBuffer(oi, false);
                     if ((info.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) outDone = true;
@@ -443,7 +608,6 @@ public final class RgScan {
             t.meter = m;
         } finally {
             if (codec != null) { try { codec.stop(); } catch (Throwable ignored) { } codec.release(); }
-            ex.release();
         }
     }
 

@@ -1,4 +1,8 @@
 package android.view; public class View { public static final int VISIBLE=0, GONE=8; public View(android.content.Context c){} public void setPadding(int a,int b,int c,int d){} public void setLayoutParams(ViewGroup.LayoutParams p){}
- public final ViewTreeObserver getViewTreeObserver(){return null;} public final <T extends View> T findViewById(int id){return null;} public final int getWidth(){return 0;} public void getLocationInWindow(int[] l){} public float getTranslationX(){return 0;} public void setTranslationX(float x){}
+ public final ViewTreeObserver getViewTreeObserver(){return null;} public final <T extends View> T findViewById(int id){return null;} public final int getWidth(){return 0;} public final int getHeight(){return 0;} public void getLocationInWindow(int[] l){} public float getTranslationX(){return 0;} public void setTranslationX(float x){}
  public int getVisibility(){return 0;} public void setVisibility(int v){} public final ViewParent getParent(){return null;} public ViewGroup.LayoutParams getLayoutParams(){return null;}
- public int getPaddingStart(){return 0;} public int getPaddingLeft(){return 0;} public int getPaddingTop(){return 0;} public int getPaddingEnd(){return 0;} public int getPaddingBottom(){return 0;} public void setPaddingRelative(int a,int b,int c,int d){} }
+ public int getPaddingStart(){return 0;} public int getPaddingLeft(){return 0;} public int getPaddingRight(){return 0;} public int getPaddingTop(){return 0;} public int getPaddingEnd(){return 0;} public int getPaddingBottom(){return 0;} public void setPaddingRelative(int a,int b,int c,int d){}
+ public android.content.Context getContext(){return null;} public View getRootView(){return null;} public boolean post(Runnable r){return true;} public void requestLayout(){} public void invalidate(){}
+ public void setTag(int k, Object o){} public Object getTag(int k){return null;}
+ public void addOnAttachStateChangeListener(OnAttachStateChangeListener l){}
+ public interface OnAttachStateChangeListener { void onViewAttachedToWindow(View v); void onViewDetachedFromWindow(View v); } }
