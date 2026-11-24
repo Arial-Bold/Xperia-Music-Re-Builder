@@ -1,0 +1,1 @@
+package android.app; public class Activity extends android.content.ContextWrapper { public Activity(){super(null);} public final Application getApplication(){return null;} public void startIntentSenderForResult(android.content.IntentSender i,int r,android.content.Intent f,int a,int b,int c) throws android.content.IntentSender.SendIntentException {} }

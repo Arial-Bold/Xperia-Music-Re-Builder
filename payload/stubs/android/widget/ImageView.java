@@ -1,0 +1,1 @@
+package android.widget; public class ImageView extends android.view.View { public ImageView(android.content.Context c){super(c);} public enum ScaleType { CENTER_CROP } public void setScaleType(ScaleType s){} public void setImageBitmap(android.graphics.Bitmap b){} }

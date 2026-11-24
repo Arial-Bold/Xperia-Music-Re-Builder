@@ -1,0 +1,1 @@
+package android.media; public final class MediaFormat { public static final String KEY_MIME="mime", KEY_CHANNEL_COUNT="channel-count", KEY_SAMPLE_RATE="sample-rate"; public String getString(String k){return null;} public int getInteger(String k){return 0;} public void setInteger(String k,int v){} public boolean containsKey(String k){return false;} }

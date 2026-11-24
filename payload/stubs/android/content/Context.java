@@ -1,0 +1,4 @@
+package android.content;
+public abstract class Context { public static final int MODE_PRIVATE = 0; public static final int MODE_MULTI_PROCESS = 4; public static final String NOTIFICATION_SERVICE="notification";
+ public abstract ContentResolver getContentResolver(); public abstract String getPackageName(); public abstract SharedPreferences getSharedPreferences(String n, int m); public abstract android.content.res.Resources getResources(); public abstract java.io.File getExternalFilesDir(String t);
+ public Context getApplicationContext(){return null;} public java.io.File getCacheDir(){return null;} public Object getSystemService(String n){return null;} public int checkUriPermission(android.net.Uri u,int pid,int uid,int f){return 0;} }

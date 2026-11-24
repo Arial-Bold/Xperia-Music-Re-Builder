@@ -1,0 +1,1 @@
+package android.provider; public final class MediaStore { public static android.app.PendingIntent createWriteRequest(android.content.ContentResolver r, java.util.Collection<android.net.Uri> u){return null;} }

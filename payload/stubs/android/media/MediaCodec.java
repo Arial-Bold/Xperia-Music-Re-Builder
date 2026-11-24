@@ -1,0 +1,4 @@
+package android.media; public final class MediaCodec { public static final int BUFFER_FLAG_END_OF_STREAM=4, INFO_OUTPUT_FORMAT_CHANGED=-2;
+ public static final class BufferInfo { public int offset, size, flags; public long presentationTimeUs; }
+ public static MediaCodec createDecoderByType(String t) throws java.io.IOException {return null;} public void configure(MediaFormat f, android.view.Surface s, android.media.MediaCrypto c, int fl){} public void start(){} public void stop(){} public void release(){}
+ public int dequeueInputBuffer(long t){return 0;} public java.nio.ByteBuffer getInputBuffer(int i){return null;} public void queueInputBuffer(int i,int o,int s,long t,int f){} public int dequeueOutputBuffer(BufferInfo b,long t){return 0;} public java.nio.ByteBuffer getOutputBuffer(int i){return null;} public MediaFormat getOutputFormat(){return null;} public MediaFormat getOutputFormat(int i){return null;} public void releaseOutputBuffer(int i, boolean r){} }

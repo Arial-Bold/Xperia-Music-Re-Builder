@@ -1,0 +1,2 @@
+package android.content; public class ContextWrapper extends Context { public ContextWrapper(Context b){} public Context getBaseContext(){return null;}
+ public ContentResolver getContentResolver(){return null;} public String getPackageName(){return null;} public SharedPreferences getSharedPreferences(String n,int m){return null;} public android.content.res.Resources getResources(){return null;} public java.io.File getExternalFilesDir(String t){return null;} }
