@@ -119,13 +119,25 @@ public final class Engine {
             }
         }
         Manifest mf = new Manifest(manifestBytes);
+        boolean manifestChanged = false;
         if (mf.makeLibraryOptional("com.sony.device")) {
-            replace.put("AndroidManifest.xml", mf.bytes());
+            manifestChanged = true;
             out.results.add(0, resultOk("Installs on phones that aren't Xperias"));
         } else {
             out.results.add(0, resultSkip("Installs on phones that aren't Xperias", "no Xperia-only requirement found (already optional?)"));
         }
         l.log(out.results.get(0).toString());
+        // a foreground service so the ReplayGain scan keeps running with the screen off or the app in the background
+        byte[] withService = mf.withServiceLike("com.sonyericsson.music.metadata.cloud.DownloadService", "com.fpmod.dsd.RgScanService");
+        if (withService != null) {
+            mf = new Manifest(withService);
+            manifestChanged = true;
+            out.results.add(resultOk("ReplayGain scan keeps running in the background"));
+        } else {
+            out.results.add(resultSkip("ReplayGain scan keeps running in the background", "Sony\u2019s data-sync service entry wasn\u2019t found"));
+        }
+        l.log(out.results.get(out.results.size() - 1).toString());
+        if (manifestChanged) replace.put("AndroidManifest.xml", mf.bytes());
 
         Map<String, byte[]> add = new LinkedHashMap<>();
         byte[] payload;

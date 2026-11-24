@@ -104,4 +104,132 @@ public final class Manifest {
         Manifest copy = new Manifest(d);
         return copy.makeLibraryOptional(library);
     }
+
+    /**
+     * Returns a copy of this manifest with a new &lt;service&gt; added right after an existing one,
+     * copied from it (same exported/foregroundServiceType settings) but with a new class name and
+     * without android:process, so it runs in the app's main process. Returns null if the template
+     * service isn't found, or if a service with the new name already exists.
+     */
+    public byte[] withServiceLike(String templateClass, String newClass) {
+        if (strings.contains(newClass)) return null;
+        ByteBuffer b = ByteBuffer.wrap(d).order(ByteOrder.LITTLE_ENDIAN);
+        int tmpl = strings.indexOf(templateClass);
+        if (tmpl < 0) return null;
+        // find the template's start and matching end element
+        int q = poolEnd, start = -1, startLen = 0, end = -1, depth = 0;
+        while (q + 8 <= d.length) {
+            int type = b.getShort(q) & 0xffff, sz = b.getInt(q + 4);
+            if (sz <= 0) break;
+            if (start < 0 && type == 0x0102 && strings.get(b.getInt(q + 20)).equals("service")) {
+                int astart = b.getShort(q + 24) & 0xffff, asize = b.getShort(q + 26) & 0xffff, acount = b.getShort(q + 28) & 0xffff;
+                for (int i = 0; i < acount; i++) {
+                    int a = q + 16 + astart + i * asize;
+                    if (strings.get(b.getInt(a + 4)).equals("name") && b.getInt(a + 8) == tmpl) { start = q; startLen = sz; depth = 0; }
+                }
+            } else if (start >= 0) {
+                if (type == 0x0102) depth++;
+                else if (type == 0x0103) { if (depth == 0) { end = q; break; } depth--; }
+            }
+            q += sz;
+        }
+        if (start < 0 || end < 0 || end != start + startLen) return null;   // only simple, childless services
+        int endLen = b.getInt(end + 4);
+        int newIndex = strings.size();
+
+        // the new start element: template attributes, minus "process", with the new name
+        int astart = b.getShort(start + 24) & 0xffff, asize = b.getShort(start + 26) & 0xffff, acount = b.getShort(start + 28) & 0xffff;
+        int idIdx = b.getShort(start + 30) & 0xffff, classIdx = b.getShort(start + 32) & 0xffff, styleIdx = b.getShort(start + 34) & 0xffff;
+        if (idIdx != 0 || classIdx != 0 || styleIdx != 0) return null;
+        java.io.ByteArrayOutputStream attrs = new java.io.ByteArrayOutputStream();
+        int kept = 0;
+        for (int i = 0; i < acount; i++) {
+            int a = start + 16 + astart + i * asize;
+            String an = strings.get(b.getInt(a + 4));
+            if (an.equals("process")) continue;
+            byte[] at = java.util.Arrays.copyOfRange(d, a, a + asize);
+            if (an.equals("name")) {
+                ByteBuffer ab = ByteBuffer.wrap(at).order(ByteOrder.LITTLE_ENDIAN);
+                ab.putInt(8, newIndex);
+                ab.put(15, (byte) 0x03);
+                ab.putInt(16, newIndex);
+            }
+            attrs.write(at, 0, at.length);
+            kept++;
+        }
+        byte[] attrBytes = attrs.toByteArray();
+        int headLen = 16 + astart;
+        ByteBuffer el = ByteBuffer.allocate(headLen + attrBytes.length).order(ByteOrder.LITTLE_ENDIAN);
+        el.put(d, start, headLen).put(attrBytes);
+        el.putInt(4, el.capacity());
+        el.putShort(28, (short) kept);
+        byte[] newStart = el.array();
+        byte[] newEnd = java.util.Arrays.copyOfRange(d, end, end + endLen);
+
+        // string pool with the new class name appended
+        byte[] pool = poolWith(newClass);
+        int insertAt = end + endLen;
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+        out.write(d, 0, 8);
+        out.write(pool, 0, pool.length);
+        out.write(d, poolEnd, insertAt - poolEnd);
+        out.write(newStart, 0, newStart.length);
+        out.write(newEnd, 0, newEnd.length);
+        out.write(d, insertAt, d.length - insertAt);
+        byte[] r = out.toByteArray();
+        ByteBuffer.wrap(r).order(ByteOrder.LITTLE_ENDIAN).putInt(4, r.length);
+        return r;
+    }
+
+    private byte[] poolWith(String extra) {
+        ByteBuffer b = ByteBuffer.wrap(d).order(ByteOrder.LITTLE_ENDIAN);
+        int p = 8;
+        int hs = b.getShort(p + 2) & 0xffff, sz = b.getInt(p + 4);
+        int count = b.getInt(p + 8), styles = b.getInt(p + 12), flags = b.getInt(p + 16);
+        int sStart = b.getInt(p + 20), stStart = b.getInt(p + 24);
+        boolean utf8 = (flags & 0x100) != 0;
+        int dataEnd = styles > 0 ? stStart : sz;                 // string data region [sStart, dataEnd)
+        byte[] data = java.util.Arrays.copyOfRange(d, p + sStart, p + dataEnd);
+        byte[] styleData = styles > 0 ? java.util.Arrays.copyOfRange(d, p + stStart, p + sz) : new byte[0];
+        // encode the new string
+        java.io.ByteArrayOutputStream enc = new java.io.ByteArrayOutputStream();
+        if (utf8) {
+            byte[] u = extra.getBytes(StandardCharsets.UTF_8);
+            int chars = extra.length();
+            if (chars > 0x7f) { enc.write(0x80 | (chars >> 8)); }
+            enc.write(chars & 0xff);
+            if (u.length > 0x7f) { enc.write(0x80 | (u.length >> 8)); }
+            enc.write(u.length & 0xff);
+            enc.write(u, 0, u.length);
+            enc.write(0);
+        } else {
+            byte[] u = extra.getBytes(StandardCharsets.UTF_16LE);
+            int chars = u.length / 2;
+            enc.write(chars & 0xff); enc.write((chars >> 8) & 0xff);
+            enc.write(u, 0, u.length);
+            enc.write(0); enc.write(0);
+        }
+        byte[] e = enc.toByteArray();
+        int newOffset = data.length;
+        int newDataLen = data.length + e.length;
+        int padded = (newDataLen + 3) & ~3;
+        int offsetsLen = (count + 1) * 4 + styles * 4;
+        int newSStart = hs + offsetsLen;
+        int newStStart = styles > 0 ? newSStart + padded : 0;
+        int newSize = newSStart + padded + styleData.length;
+        ByteBuffer o = ByteBuffer.allocate(newSize).order(ByteOrder.LITTLE_ENDIAN);
+        o.put(d, p, hs);
+        o.putInt(4, newSize);
+        o.putInt(8, count + 1);
+        o.putInt(20, newSStart);
+        o.putInt(24, newStStart);
+        o.position(hs);
+        for (int i = 0; i < count; i++) o.putInt(b.getInt(p + hs + i * 4));
+        o.putInt(newOffset);
+        for (int i = 0; i < styles; i++) o.putInt(b.getInt(p + hs + count * 4 + i * 4));
+        o.put(data).put(e);
+        o.position(newSStart + padded);
+        o.put(styleData);
+        return o.array();
+    }
 }

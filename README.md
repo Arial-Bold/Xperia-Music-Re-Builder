@@ -15,7 +15,7 @@
 - **DSD and DST playback.** Plays DSF and DFF files, including DST-compressed SACD rips, by decoding them in software. A Settings switch turns this off for phones that handle DSD themselves.
 - **DSD in the library.** Titles, artists, albums and cover art from DSD files show up properly, and DSD tracks get the gold HR (High-Resolution) badge.
 - **ReplayGain.** Track or album gain, preamp, and a fallback level for untagged songs, in a new ReplayGain section of Settings. Clipping protection is always on.
-- **ReplayGain scan.** “Add ReplayGain to files” measures every song without tags (EBU R128, up to 6 songs at once) and writes the tags into the files: FLAC, MP3, M4A/MP4 (AAC and ALAC), WAV, AIFF, DSF and DFF. FLAC and M4A are read by the app itself rather than the phone’s media components, which are slow or unreliable on some phones. A song that gets stuck is skipped after 30 seconds, and the notification shows which song is slowest.
+- **ReplayGain scan.** “Add ReplayGain to files” measures every song without tags (EBU R128, up to 6 songs at once) and writes the tags into the files: FLAC, MP3, M4A/MP4 (AAC and ALAC), WAV, AIFF, DSF and DFF. FLAC and M4A are read by the app itself rather than the phone’s media components, which are slow or unreliable on some phones. The scan keeps running with the screen off or the app in the background. A song that gets stuck is skipped after 30 seconds, and the notification shows which song is slowest.
 - **Download image.** Back in Edit album info: searches MusicBrainz by album and artist and offers covers at least 800 × 800.
 - **Classic player layout.** A switch in Settings → Customize (on by default) brings back the older full player on Music 9.4.16.A.1.x: album art edge to edge with the HR icon in its corner, and no format line above the title.
 - **Tidier Settings.** No empty icon space, titles lined up, unused service settings hidden.
@@ -52,6 +52,15 @@ Where the key is kept:
 - **Windows:** `%APPDATA%\Xperia Music Re-Builder\`
 
 Back up `signing-key.p12` and `signing-key.password` from there. Without them you can’t update the app later.
+
+### Samsung phones
+
+Samsung’s battery management can still stop the ReplayGain scan in the background. If it stops partway:
+
+- Go to **Settings → Apps → Music → Battery** and choose **Unrestricted**.
+- Check that Music isn’t listed under **Settings → Battery → Background usage limits → Sleeping apps** or **Deep sleeping apps**.
+
+Then start the scan again. Songs that were already tagged are skipped.
 
 ### Command line
 

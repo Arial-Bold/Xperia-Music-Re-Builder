@@ -60,6 +60,7 @@ public final class RgScan {
     }
 
     private static volatile boolean running, stop;
+    static boolean isRunning() { return running; }
     /** Songs being worked on now: name -> {start time, 0 = measuring / 1 = saving}. */
     private static final java.util.concurrent.ConcurrentHashMap<String, long[]> active = new java.util.concurrent.ConcurrentHashMap<>();
 
@@ -221,6 +222,7 @@ public final class RgScan {
 
     private static void startWorker(final Context app, final List<Track> todo) {
         running = true; stop = false;
+        RgScanService.begin(app);   // keeps the app running with the screen off or in the background
         final Handler ui = new Handler(Looper.getMainLooper());
         // Several albums are measured at once, one per core (up to 4), keeping some cores free.
         final int threads = Math.max(2, Math.min(6, Runtime.getRuntime().availableProcessors() - 2));
@@ -312,6 +314,7 @@ public final class RgScan {
                     try { j.get(); } catch (Throwable e) { Log.w(TAG, "album job failed", e); }
                 }
                 running = false;
+                RgScanService.end(app);
                 int okN = ok.get(), failN = failed.get();
                 final String summary = (stop ? "Stopped. " : "") + "ReplayGain added to " + okN + " track" + (okN == 1 ? "" : "s")
                         + (failN > 0 ? ", " + failN + " failed" : "") + ".";
@@ -693,21 +696,29 @@ public final class RgScan {
 
     // ------------------------------------------------------- notification
 
+    static final int NOTICE_ID = NOTIF_ID;
+
+    /** The scan's notification (also used by RgScanService as its foreground notification). */
+    static Notification buildNotice(Context ctx, String text, int done, int total, boolean ongoing) {
+        NotificationManager nm = (NotificationManager) ctx.getSystemService(Context.NOTIFICATION_SERVICE);
+        if (nm != null) nm.createNotificationChannel(new NotificationChannel(CHANNEL, "ReplayGain scan", NotificationManager.IMPORTANCE_LOW));
+        int icon = ctx.getResources().getIdentifier(ongoing ? "stat_sys_download" : "stat_sys_download_done", "drawable", "android");
+        Notification.Builder b = new Notification.Builder(ctx, CHANNEL)
+                .setSmallIcon(icon)
+                .setContentTitle(ongoing ? "Adding ReplayGain" : "ReplayGain scan finished")
+                .setContentText(text)
+                .setStyle(new Notification.BigTextStyle().bigText(text))
+                .setOngoing(ongoing)
+                .setOnlyAlertOnce(true);
+        if (ongoing) b.setProgress(total, done, false);
+        return b.build();
+    }
+
     private static void showNotice(Context ctx, String text, int done, int total, boolean ongoing) {
         try {
             NotificationManager nm = (NotificationManager) ctx.getSystemService(Context.NOTIFICATION_SERVICE);
             if (nm == null) return;
-            nm.createNotificationChannel(new NotificationChannel(CHANNEL, "ReplayGain scan", NotificationManager.IMPORTANCE_LOW));
-            int icon = ctx.getResources().getIdentifier(ongoing ? "stat_sys_download" : "stat_sys_download_done", "drawable", "android");
-            Notification.Builder b = new Notification.Builder(ctx, CHANNEL)
-                    .setSmallIcon(icon)
-                    .setContentTitle(ongoing ? "Adding ReplayGain" : "ReplayGain scan finished")
-                    .setContentText(text)
-                    .setStyle(new Notification.BigTextStyle().bigText(text))
-                    .setOngoing(ongoing)
-                    .setOnlyAlertOnce(true);
-            if (ongoing) b.setProgress(total, done, false);
-            nm.notify(NOTIF_ID, b.build());
+            nm.notify(NOTIF_ID, buildNotice(ctx, text, done, total, ongoing));
         } catch (Throwable e) {
             Log.w(TAG, "notification failed", e);
         }
