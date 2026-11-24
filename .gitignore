@@ -1,0 +1,10 @@
+build/
+lib/
+dist/
+*.apk
+*.jks
+*.p12
+*.keystore
+.DS_Store
+.idea/
+*.iml
