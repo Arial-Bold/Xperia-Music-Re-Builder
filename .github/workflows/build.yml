@@ -1,0 +1,118 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  APP_NAME: Xperia Music Re-Builder
+  APKTOOL_URL: https://github.com/iBotPeaches/Apktool/releases/download/v2.10.0/apktool_2.10.0.jar
+  SIGNER_URL: https://github.com/patrickfav/uber-apk-signer/releases/download/v1.3.0/uber-apk-signer-1.3.0.jar
+  FLATLAF_URL: https://repo1.maven.org/maven2/com/formdev/flatlaf/3.5.4/flatlaf-3.5.4.jar
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            target: mac-apple-silicon
+          - runner: macos-15-intel
+            target: mac-intel
+          - runner: windows-latest
+            target: windows
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Version
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          [[ "$GITHUB_REF" == refs/tags/v* && "$v" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]] || v="1.0.0"
+          echo "APP_VERSION=$v" >> "$GITHUB_ENV"
+
+      - name: Download libraries
+        run: |
+          mkdir -p lib
+          curl -fsSL -o lib/apktool_2.10.0.jar "$APKTOOL_URL"
+          curl -fsSL -o lib/uber-apk-signer-1.3.0.jar "$SIGNER_URL"
+          curl -fsSL -o lib/flatlaf-3.5.4.jar "$FLATLAF_URL"
+
+      - name: Compile
+        run: |
+          mkdir -p build/classes build/input
+          javac -nowarn -encoding UTF-8 --release 17 -cp "lib/*" -d build/classes $(find src/main/java -name '*.java')
+          cp -R src/main/resources/. build/classes/
+          jar --create --file build/input/xmrb.jar --main-class com.arialbold.xmrb.Main -C build/classes .
+          cp lib/*.jar build/input/
+
+      - name: Icon (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          mkdir -p build/icon.iconset
+          for s in 16 32 128 256 512; do
+            sips -z $s $s packaging/icon-1024.png --out build/icon.iconset/icon_${s}x${s}.png >/dev/null
+            d=$((s*2)); sips -z $d $d packaging/icon-1024.png --out build/icon.iconset/icon_${s}x${s}@2x.png >/dev/null
+          done
+          iconutil -c icns build/icon.iconset -o build/app.icns
+
+      # The builder runs apktool and keytool from its own bundled Java, so the runtime
+      # must keep its bin/ folder: the jlink options below leave out --strip-native-commands.
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          jpackage --type app-image --dest dist \
+            --name "$APP_NAME" --app-version "$APP_VERSION" --vendor "Arial-Bold" \
+            --input build/input --main-jar xmrb.jar --main-class com.arialbold.xmrb.Main \
+            --icon build/app.icns \
+            --mac-package-identifier com.arialbold.xmrb --mac-package-name "Music ReBuilder" \
+            --java-options "-Xmx1g" \
+            --jlink-options "--strip-debug --no-header-files --no-man-pages"
+          codesign --force --deep --sign - "dist/$APP_NAME.app"
+          "dist/$APP_NAME.app/Contents/runtime/Contents/Home/bin/java" -version
+          cd dist && ditto -c -k --keepParent "$APP_NAME.app" "../Xperia-Music-Re-Builder-${{ matrix.target }}.zip"
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          jpackage --type app-image --dest dist \
+            --name "$APP_NAME" --app-version "$APP_VERSION" --vendor "Arial-Bold" \
+            --input build/input --main-jar xmrb.jar --main-class com.arialbold.xmrb.Main \
+            --icon packaging/app.ico \
+            --java-options "-Xmx1g" \
+            --jlink-options "--strip-debug --no-header-files --no-man-pages"
+          "dist/$APP_NAME/runtime/bin/java.exe" -version
+          powershell -NoProfile -Command "Compress-Archive -Path 'dist/$APP_NAME' -DestinationPath 'Xperia-Music-Re-Builder-${{ matrix.target }}.zip'"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Xperia-Music-Re-Builder-${{ matrix.target }}
+          path: Xperia-Music-Re-Builder-${{ matrix.target }}.zip
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*.zip
+          generate_release_notes: true
