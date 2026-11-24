@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/icon.png" width="128" alt=""></p>
+
 <h1 align="center">Xperia Music Re-Builder</h1>
 
 <p align="center">Rebuilds Sony’s Xperia Music app so it installs on any Android phone, and adds DSD playback, ReplayGain, cover downloads and a tidier Settings screen.<br>For macOS and Windows.</p>
@@ -13,7 +15,7 @@
 - **DSD and DST playback.** Plays DSF and DFF files, including DST-compressed SACD rips, by decoding them in software. A Settings switch turns this off for phones that handle DSD themselves.
 - **DSD in the library.** Titles, artists, albums and cover art from DSD files show up properly, and DSD tracks get the gold HR (High-Resolution) badge.
 - **ReplayGain.** Track or album gain, preamp, and a fallback level for untagged songs, in a new ReplayGain section of Settings. Clipping protection is always on.
-- **ReplayGain scan.** “Add ReplayGain to files” measures every song without tags (EBU R128, using all CPU cores) and writes the tags into the files.
+- **ReplayGain scan.** “Add ReplayGain to files” measures every song without tags (EBU R128, using all CPU cores) and writes the tags into the files: FLAC, MP3, M4A/MP4 (AAC and ALAC), WAV, AIFF, DSF and DFF.
 - **Download image.** Back in Edit album info: searches MusicBrainz by album and artist and offers covers at least 800 × 800.
 - **Tidier Settings.** No empty icon space, titles lined up, unused service settings hidden.
 

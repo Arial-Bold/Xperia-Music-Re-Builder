@@ -9,7 +9,7 @@ import java.util.List;
 import java.util.Locale;
 
 /**
- * Writes ReplayGain tags into FLAC, MP3, WAV, AIFF, DSF and DFF files. Pure Java.
+ * Writes ReplayGain tags into FLAC, MP3, M4A/MP4, WAV, AIFF, DSF and DFF files. Pure Java.
  * Tags are rewritten in place whenever there is room (audio untouched). Otherwise the file
  * is rebuilt through a temporary copy.
  */
@@ -55,7 +55,7 @@ public final class RgWriter {
         if (m.equals("DSD ")) return null;
         if (m.equals("FRM8")) return null;
         if (looksLikeMpegAudio(h)) return null;
-        if (ascii(h, 4, 4).equals("ftyp")) return "M4A/MP4 files aren't supported for writing";
+        if (ascii(h, 4, 4).equals("ftyp")) return Mp4.problem(f);
         if (m.equals("OggS")) return "Ogg/Opus files aren't supported for writing";
         if (m.equals("wvpk")) return "WavPack files aren't supported for writing";
         return "unknown format";
@@ -88,6 +88,7 @@ public final class RgWriter {
         else if (m.equals("FORM")) iff(f, v, true, false);
         else if (m.equals("FRM8")) iff(f, v, true, true);
         else if (m.equals("DSD ")) dsf(f, v);
+        else if (ascii(h, 4, 4).equals("ftyp")) Mp4.write(f, pairs(v), temp);
         else mp3(f, v, temp);
     }
 
@@ -105,7 +106,7 @@ public final class RgWriter {
         return l;
     }
 
-    private static boolean isRgKey(String k) {
+    static boolean isRgKey(String k) {
         String u = k.trim().toUpperCase(Locale.US);
         for (String s : KEYS) if (s.equals(u)) return true;
         return u.equals("REPLAYGAIN_REFERENCE_LOUDNESS");
@@ -400,7 +401,7 @@ public final class RgWriter {
     // --------------------------------------------------------------- rebuilding
 
     /** Replaces bytes [from, to) of the file with head, via a temporary copy. */
-    private static void rebuild(Rw f, Temp temp, long from, long to, ByteBuffer head) throws IOException {
+    static void rebuild(Rw f, Temp temp, long from, long to, ByteBuffer head) throws IOException {
         long len = f.size();
         Rw t = temp.create();
         try {

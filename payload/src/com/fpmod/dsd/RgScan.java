@@ -352,8 +352,7 @@ public final class RgScan {
             if (track < 0) throw new IOException("no audio track");
             ex.selectTrack(track);
             String mime = fmt.getString(MediaFormat.KEY_MIME);
-            codec = MediaCodec.createDecoderByType(mime);
-            codec.configure(fmt, null, null, 0);
+            codec = openDecoder(mime, fmt);
             codec.start();
             MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
             boolean inDone = false, outDone = false;
@@ -362,24 +361,35 @@ public final class RgScan {
             int encoding = 2;
             Loudness m = null;
             float[] fb = new float[0];
+            short[] sb = new short[0];
+            int[] ib32 = new int[0];
+            byte[] b24 = new byte[0];
             while (!outDone && !stop) {
-                if (!inDone) {
-                    int ii = codec.dequeueInputBuffer(10000);
-                    if (ii >= 0) {
-                        ByteBuffer ib = codec.getInputBuffer(ii);
-                        int n = ex.readSampleData(ib, 0);
-                        if (n < 0) { codec.queueInputBuffer(ii, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM); inDone = true; }
-                        else { codec.queueInputBuffer(ii, 0, n, ex.getSampleTime(), 0); ex.advance(); }
-                    }
+                boolean progressed = false;
+                // hand the decoder every free input buffer without waiting
+                while (!inDone) {
+                    int ii = codec.dequeueInputBuffer(0);
+                    if (ii < 0) break;
+                    ByteBuffer ib = codec.getInputBuffer(ii);
+                    int n = ex.readSampleData(ib, 0);
+                    if (n < 0) { codec.queueInputBuffer(ii, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM); inDone = true; }
+                    else { codec.queueInputBuffer(ii, 0, n, ex.getSampleTime(), 0); ex.advance(); }
+                    progressed = true;
                 }
-                int oi = codec.dequeueOutputBuffer(info, 10000);
-                if (oi == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
-                    MediaFormat of = codec.getOutputFormat();
-                    channels = of.getInteger(MediaFormat.KEY_CHANNEL_COUNT);
-                    rate = of.getInteger(MediaFormat.KEY_SAMPLE_RATE);
-                    encoding = of.containsKey("pcm-encoding") ? of.getInteger("pcm-encoding") : 2;
-                    m = new Loudness(channels, rate);
-                } else if (oi >= 0) {
+                // take everything that's decoded; only wait when nothing else could happen
+                while (!outDone) {
+                    int oi = codec.dequeueOutputBuffer(info, progressed ? 0 : 5000);
+                    if (oi == MediaCodec.INFO_TRY_AGAIN_LATER) break;
+                    if (oi == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+                        MediaFormat of = codec.getOutputFormat();
+                        channels = of.getInteger(MediaFormat.KEY_CHANNEL_COUNT);
+                        rate = of.getInteger(MediaFormat.KEY_SAMPLE_RATE);
+                        encoding = of.containsKey("pcm-encoding") ? of.getInteger("pcm-encoding") : 2;
+                        m = new Loudness(channels, rate);
+                        continue;
+                    }
+                    if (oi < 0) continue;
+                    progressed = true;
                     // Take the format from this buffer: some decoders report one sample format and deliver another.
                     MediaFormat bf = codec.getOutputFormat(oi);
                     if (bf != null) {
@@ -397,17 +407,28 @@ public final class RgScan {
                         int bps = encoding == 4 || encoding == 22 ? 4 : encoding == 21 ? 3 : 2;
                         int samples = info.size / bps;
                         if (fb.length < samples) fb = new float[samples];
+                        // bulk copies: far faster than reading one sample at a time
+                        switch (encoding) {
+                            case 4:
+                                b.asFloatBuffer().get(fb, 0, samples);
+                                break;
+                            case 22:
+                                if (ib32.length < samples) ib32 = new int[samples];
+                                b.asIntBuffer().get(ib32, 0, samples);
+                                for (int i = 0; i < samples; i++) fb[i] = ib32[i] / 2147483648f;
+                                break;
+                            case 21:
+                                if (b24.length < samples * 3) b24 = new byte[samples * 3];
+                                b.get(b24, 0, samples * 3);
+                                for (int i = 0, o = 0; i < samples; i++, o += 3)
+                                    fb[i] = ((b24[o] & 0xff) | ((b24[o + 1] & 0xff) << 8) | (b24[o + 2] << 16)) / 8388608f;
+                                break;
+                            default:
+                                if (sb.length < samples) sb = new short[samples];
+                                b.asShortBuffer().get(sb, 0, samples);
+                                for (int i = 0; i < samples; i++) fb[i] = sb[i] / 32768f;
+                        }
                         for (int i = 0; i < samples; i++) {
-                            switch (encoding) {
-                                case 4: fb[i] = b.getFloat(i * 4); break;
-                                case 22: fb[i] = b.getInt(i * 4) / 2147483648f; break;
-                                case 21: {
-                                    int o = i * 3;
-                                    int s = (b.get(o) & 0xff) | ((b.get(o + 1) & 0xff) << 8) | (b.get(o + 2) << 16);
-                                    fb[i] = s / 8388608f; break;
-                                }
-                                default: fb[i] = b.getShort(i * 2) / 32768f;
-                            }
                             float x = fb[i];
                             if (x != x || x > 4f || x < -4f) throw new IOException("decoder returned unreadable audio");
                         }
@@ -424,6 +445,42 @@ public final class RgScan {
             if (codec != null) { try { codec.stop(); } catch (Throwable ignored) { } codec.release(); }
             ex.release();
         }
+    }
+
+    /**
+     * Prefers Android's own software decoder. Some phones (Samsung especially) otherwise hand
+     * out a decoder that sends the audio to a separate audio processor: fine for playback,
+     * slow when several songs are decoded at full speed at once.
+     */
+    private static MediaCodec openDecoder(String mime, MediaFormat fmt) throws IOException {
+        String best = null;
+        int bestScore = 0;
+        try {
+            for (android.media.MediaCodecInfo ci : new android.media.MediaCodecList(android.media.MediaCodecList.REGULAR_CODECS).getCodecInfos()) {
+                if (ci.isEncoder()) continue;
+                boolean fits = false;
+                for (String t : ci.getSupportedTypes()) if (t.equalsIgnoreCase(mime)) { fits = true; break; }
+                if (!fits) continue;
+                String n = ci.getName();
+                int score = 0;
+                if (n.startsWith("c2.android.") || n.startsWith("OMX.google.")) score = 3;
+                else { try { if (ci.isSoftwareOnly()) score = 2; } catch (Throwable ignored) { } }
+                if (score > bestScore) { bestScore = score; best = n; }
+            }
+        } catch (Throwable ignored) { }
+        if (best != null) {
+            MediaCodec c = null;
+            try {
+                c = MediaCodec.createByCodecName(best);
+                c.configure(fmt, null, null, 0);
+                return c;
+            } catch (Throwable e) {
+                if (c != null) try { c.release(); } catch (Throwable ignored) { }
+            }
+        }
+        MediaCodec c = MediaCodec.createDecoderByType(mime);
+        c.configure(fmt, null, null, 0);
+        return c;
     }
 
     // ------------------------------------------------------------ write
